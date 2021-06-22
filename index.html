@@ -1,0 +1,1014 @@
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <script src="gl-matrix-3.3.0/dist/gl-matrix.js"></script>
+        <script src="vertex_shader.js"></script>
+        <script src="fragment_shader.js"></script>
+        <script src="utils.js"></script>
+        <script src="hyperbolic_transformations.js"></script>
+        <script src="euclidean_vertex_shader.js"></script>
+        <script src="euclidean_fragment_shader.js"></script>
+        <script src="shadow_shader.js"></script>
+        <script src="sky_shader.js"></script>
+        <script src="obj_shader.js"></script>
+        <script src="./objreader/readobj.js"></script>
+
+        <!-- object files -->
+        <script src="./objreader/sphere.obj"></script>
+        <script src="./objreader/spaceship.obj"></script>
+        <script src="./objreader/cow.obj"></script>
+        <script src="./objreader/taxi.obj"></script>
+        <script src="./objreader/tree.obj"></script>
+        <script src="./objreader/house.obj"></script>
+        <script src="./objreader/dead_tree.obj"></script>
+
+        <script src="simpleGeometry.js"></script>
+
+        <!-- just for test delete later -->
+        <script src="test_shadow.js"></script>
+        
+        <script type="text/javascript">
+
+        const mat4 = glMatrix.mat4;
+        const vec3 = glMatrix.vec3;
+        const vec4 = glMatrix.vec4;
+        const vec2 = glMatrix.vec2;
+
+        const camera_selection_arr = [
+            third_person_camera,
+            first_person_camera
+        ]
+
+        const aspect = 1024/768; //aspect ratio of the screen
+        
+        var gl; // webgl context
+        var shaderProgram; //non euclidean shader program
+        var euclideanProgram;
+        var shadowProgram;//program for shadow
+        var skyProgram;//program for skybox
+        var objectProgram;//program for geometry .obj
+
+        //differents vao for geometry
+        var triangle_vao;
+        var cube_vao;
+        var sphere_vao;
+        var disc_vao;
+        var big_cube_vao;
+        var terrain_vao;
+        var tree_vao;
+
+        var object_sphere_vao;
+        var spaceship_vao;
+        var cow_vao;
+        var taxi_vao;
+        var house_vao;
+        var dead_tree_vao;
+
+        // texture and buffer for shadow
+        var shadowTexture;
+        var depthTexture;
+        var frameBuffer;
+
+        // texture for skybox
+        var skyTexture;
+        var skyTextureName = [
+            "./textures/posx.png",
+            "./textures/negx.png",
+            "./textures/posy.png",
+            "./textures/negy.png",
+            "./textures/posz.png",
+            "./textures/negz.png"
+        ]
+        var skyTextureImages = []
+
+        //texture
+        var spaceship_texture;
+        const spaceship_textureName = "./textures/spaceship.png";
+
+        var cow_texture;
+        const cow_textureName = "./textures/cow.png";
+
+        var taxi_texture;
+        const taxi_textureName = "./textures/taxi.png";
+
+        var tree_texture;
+        const tree_textureName = "./textures/tree.png";
+
+        var house_texture;
+        const house_textureName = "./textures/house.png";
+
+        var grass_texture;
+        const grass_textureName = "./textures/grass.png";
+
+        var wood_texture;
+        const wood_textureName = "./textures/wood.png";
+
+        //house, taxi, tree
+
+        // general for texture
+        var leftToRead;
+
+
+        //those are variable just for testing some geometry DELETE LATER
+        var rotation_point = vec4.fromValues(0.7,0.0,0.0,1.0);
+        var current_rotation = 0;
+
+
+        //====== first person camera parameter
+        //angle we are looking at
+        var horizontal_angle = 0; //from 0 to 365 degree
+        //vertical angle to look up and down
+        var vertical_angle = 0; //from -89 to 89 degree
+
+        const step_size = 0.2;//size of a step 
+
+        var step_forward = false;
+        var step_backward = false;
+        var step_left = false;
+        var step_right = false;
+
+        //position of the camera;
+        var position_camera = vec4.fromValues(0, 0, 0, 1); //starting position at the origin
+        //starting camera is in direction -z
+        var direction_camera = vec4.fromValues(0, 0, 1*step_size, 0);
+
+        //global view matrix
+        let viewMatrix = mat4.create();
+        let copy_view_matrix = mat4.create()
+        //let correctionMatrix = mat4.create()
+
+        //global light direction for any shader
+        var lightDirection;
+        //matrix for shadow computation
+        var lightViewMatrix;
+        var lightProjectionMatrix;
+
+        //matrix for 3d models
+        let translate = mat4.create();
+        let taxi_rotation = mat4.create();
+        mat4.fromYRotation(taxi_rotation, -45 * Math.PI / 180);
+        mat4.fromTranslation(translate, vec3.fromValues(-0.2,0,1));
+        //taxi model matrix
+        var taxi_model_matrix = mat4.create()
+        mat4.fromScaling(taxi_model_matrix, vec3.fromValues(0.35,0.35,0.35))
+        mat4.multiply(taxi_model_matrix, taxi_rotation, taxi_model_matrix)
+        //mat4.multiply(taxi_model_matrix, translate, taxi_model_matrix)
+        mat4.multiply(taxi_model_matrix,
+            hyp_translation(vec4.fromValues(0,0,0,1),
+                            vec4.fromValues(-0.2,0,0.8,1)),
+            taxi_model_matrix);
+
+
+        var house_model_matrix = mat4.create();
+        mat4.fromScaling(house_model_matrix, vec3.fromValues(0.8,0.8,0.8))
+        
+        let translation_house = mat4.create()
+        mat4.fromTranslation(translation_house, vec3.fromValues(0,-0.2,0))
+        //mat4.multiply(house_model_matrix, translation_house, house_model_matrix)
+        mat4.multiply(house_model_matrix,
+            //translation_house,
+            hyp_translation(vec4.fromValues(0,0,0,1),
+                            vec4.fromValues(0,0,-0.9,1)),
+            house_model_matrix);
+        //mat4.multiply(house_model_matrix, translation_house, house_model_matrix)
+
+        let space_rotation = mat4.create();
+        mat4.fromYRotation(space_rotation, 70 * Math.PI / 180);
+        var space_model_matrix = mat4.create();
+        mat4.fromScaling(space_model_matrix, vec3.fromValues(0.15,0.15,0.15))
+        mat4.multiply(space_model_matrix, space_model_matrix, space_rotation)
+        let translation_space = mat4.create()
+        mat4.fromTranslation(translation_space, vec3.fromValues(0,1,0));
+        mat4.multiply(space_model_matrix,
+        // hyp_translation(vec4.fromValues(0,0,0,1),
+        //                 vec4.fromValues(0,0.6,0,1))
+        translation_space
+        , space_model_matrix)
+        var spaceship_angle = 0;
+
+        var cow_model_matrix = mat4.create();
+        let translation_cow = mat4.create()
+        mat4.fromScaling(cow_model_matrix, vec3.fromValues(0.1,0.1,0.1))
+        mat4.fromTranslation(translation_cow, vec3.fromValues(1,0,0))
+        mat4.multiply(cow_model_matrix, 
+        hyp_translation(vec4.fromValues(0,0,0,1),
+                        vec4.fromValues(0.75,0,0,1))
+        , cow_model_matrix)
+
+        var cow2_model_matrix = mat4.create();
+        let translation2_cow = mat4.create()
+        mat4.fromScaling(cow2_model_matrix, vec3.fromValues(0.12,0.12,0.12))
+        mat4.fromTranslation(translation2_cow, vec3.fromValues(1,0,0))
+        mat4.multiply(cow2_model_matrix, 
+        hyp_translation(vec4.fromValues(0,0,0,1),
+                        vec4.fromValues(0.65,0,0.25,1))
+        , cow2_model_matrix)
+
+        var tree1_model_matrix = mat4.create();
+        mat4.fromScaling(tree1_model_matrix, vec3.fromValues(0.2,0.2,0.2))
+        mat4.multiply(tree1_model_matrix,
+        hyp_translation(vec4.fromValues(0,0,0,1),
+                        vec4.fromValues(-0.9,0,0,1))
+        , tree1_model_matrix);
+
+        var tree2_model_matrix = mat4.create();
+        mat4.fromScaling(tree2_model_matrix, vec3.fromValues(0.2,0.2,0.2))
+        mat4.multiply(tree2_model_matrix,
+        hyp_translation(vec4.fromValues(0,0,0,1),
+                        vec4.fromValues(-0.7,0,-0.5,1))
+        , tree2_model_matrix);
+
+        var tree3_model_matrix = mat4.create();
+        mat4.fromScaling(tree3_model_matrix, vec3.fromValues(0.3,0.3,0.3))
+        mat4.multiply(tree3_model_matrix, 
+        hyp_translation(vec4.fromValues(0,0,0,1),
+                        vec4.fromValues(0.8,0,0.5,1))
+        , tree3_model_matrix);
+
+        var tree4_model_matrix = mat4.create();
+        mat4.fromScaling(tree4_model_matrix, vec3.fromValues(0.2,0.2,0.2))
+        mat4.multiply(tree4_model_matrix, 
+        hyp_translation(vec4.fromValues(0,0,0,1),
+                        vec4.fromValues(-0.6,0,0.6,1))
+        , tree4_model_matrix);
+
+        var tree5_model_matrix = mat4.create();
+        mat4.fromScaling(tree5_model_matrix, vec3.fromValues(0.35,0.35,0.35))
+        mat4.multiply(tree5_model_matrix, 
+        hyp_translation(vec4.fromValues(0,0,0,1),
+                        vec4.fromValues(0.5,0,-0.7,1))
+        , tree5_model_matrix);
+
+        var dead_tree_model_matrix = mat4.create();
+        mat4.fromScaling(dead_tree_model_matrix, vec3.fromValues(0.3,0.3,0.3))
+        mat4.multiply(dead_tree_model_matrix, 
+        hyp_translation(vec4.fromValues(0,0,0,1),
+                        vec4.fromValues(0.2,0,-0.2,1))
+        , dead_tree_model_matrix);
+
+        var dead_tree2_model_matrix = mat4.create();
+        mat4.fromScaling(dead_tree2_model_matrix, vec3.fromValues(0.35,0.35,0.35))
+        mat4.multiply(dead_tree2_model_matrix, 
+        hyp_translation(vec4.fromValues(0,0,0,1),
+                        vec4.fromValues(0.3,0,0.5,1))
+        , dead_tree2_model_matrix);
+
+        var dead_tree3_model_matrix = mat4.create();
+        mat4.fromScaling(dead_tree3_model_matrix, vec3.fromValues(0.4,0.4,0.4))
+        mat4.multiply(dead_tree3_model_matrix, 
+        hyp_translation(vec4.fromValues(0,0,0,1),
+                        vec4.fromValues(-0.4,0,-0.1,1))
+        , dead_tree3_model_matrix);
+
+
+
+        document.addEventListener('keydown', (event) => {
+            let pressed = event.key;
+            if (pressed === 'w' && !step_backward) {
+                step_forward = true
+            } else if (pressed === 's' && !step_forward) {
+                step_backward = true;
+            } else if (pressed === 'a' && !step_right) {
+                step_left = true;
+            } else if (pressed === 'd' && !step_left) {
+                step_right = true;
+            }
+        })
+
+        document.addEventListener('keyup', (event) => {
+            switch (event.key) {
+                case 'w':
+                    step_forward = false;
+                    break;
+                case 's':
+                    step_backward = false;
+                    break;
+                case 'a':
+                    step_left = false;
+                    break;
+                case 'd':
+                    step_right = false;
+                    break;
+                default:
+                    break;
+            }
+        })
+
+        //============
+        //function to move the camera with the mouse
+        function touch_handlers() {
+            const canvas_movement = document.getElementById("webgl-canvas");
+
+            canvas_movement.onmousedown = event => {
+                //when the canvas is clicked the position is updated
+                let start_x = event.clientX;
+                let start_y = event.clientY;
+                
+                event.target.onmousemove = movement => {
+                    //calculate the difference
+                    let difference_x = start_x - movement.clientX;
+                    let difference_y = start_y - movement.clientY;
+
+                    // update the position
+                    let new_vertical_position = vertical_angle + difference_y;
+                    let new_horizontal_position = horizontal_angle + difference_x;
+                    if (new_vertical_position >= 89) {
+                        vertical_angle = 89;
+                    } else if (new_vertical_position <= -89) {
+                        vertical_angle = -89;
+                    } else {
+                        vertical_angle = new_vertical_position;
+                    }
+                    if (new_horizontal_position >= 360) {
+                        horizontal_angle = new_horizontal_position - 360;
+                    } else if (new_horizontal_position < 0) {
+                        horizontal_angle = 360 + new_horizontal_position;
+                    } else {
+                        horizontal_angle = new_horizontal_position;
+                    }
+                    let offset = horizontal_angle + 90;
+                    let x_pos = Math.cos(offset * Math.PI / 180);
+                    let z_pos = Math.sin(offset * Math.PI / 180);
+
+                    vec4.set(direction_camera, x_pos * step_size, 0, z_pos * step_size, 0);
+
+                    //update starting point
+                    start_x = movement.clientX;
+                    start_y = movement.clientY;
+                };
+            };
+
+            canvas_movement.onmouseup = event => {
+                event.target.onmousemove = null;
+            }
+        };
+        
+        function createGLSLProgram(program, vertexCode, fragmentCode, name="") {
+            let vertexShader = gl.createShader(gl.VERTEX_SHADER);
+            compileShader(vertexShader, vertexCode, gl.VERTEX_SHADER, name + " Vertex shader");
+            let fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+            compileShader(fragmentShader, fragmentCode, gl.VERTEX_SHADER, name + " Fragment shader");
+
+            linkProgram(program, vertexShader, fragmentShader);
+        }
+
+        function createGLSLPrograms() {
+            shaderProgram = gl.createProgram();
+            createGLSLProgram(shaderProgram, vertexShader, fragmentShader, "hyperbolic");
+
+            euclideanProgram = gl.createProgram();
+            createGLSLProgram(euclideanProgram, euclideanVertexShader, euclideanFragmentShader, "euclidean");
+
+            shadowProgram = gl.createProgram();
+            createGLSLProgram(shadowProgram, shadowVertexShader, shadowFragmentShader, "shadow");
+
+            skyProgram = gl.createProgram();
+            createGLSLProgram(skyProgram, skyVertexShader, skyFragmentShader, "sky");
+
+            objectProgram = gl.createProgram();
+            createGLSLProgram(objectProgram, vertexObjectShader, fragmentObjectShader, "object")
+        }
+
+        function createVAO(vao, shader, vertices, normals, colors, uv) {
+            //buffer for vertices
+            let vertexBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+            //buffer for color
+            let colorBuffer;
+            if (colors.length !== 0) {
+                colorBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.STATIC_DRAW);
+            }
+            //buffer for normals
+            let normalBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normals), gl.STATIC_DRAW);
+
+            let uvBuffer;
+            if (uv.length !== 0){
+                uvBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, uvBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(uv), gl.STATIC_DRAW)
+            }
+
+            //bind vao
+            gl.bindVertexArray(vao);
+
+            //position attribute
+            gl.bindBuffer(gl.ARRAY_BUFFER,vertexBuffer);
+            let positionAttributeLocation = gl.getAttribLocation(shader, "a_position");
+            gl.enableVertexAttribArray(positionAttributeLocation);
+            gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+            if (colors.length !== 0) {
+                //color attribute
+                gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+                let colorAttributeLocation = gl.getAttribLocation(shader, "a_color");
+                gl.enableVertexAttribArray(colorAttributeLocation);
+                gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
+            }
+
+            //normal attribute
+            gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+            let normalAttributeLocation = gl.getAttribLocation(shader, "a_normal");
+            gl.enableVertexAttribArray(normalAttributeLocation);
+            gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 0, 0);
+
+            if (uv.length !== 0) {
+                gl.bindBuffer(gl.ARRAY_BUFFER, uvBuffer);
+                let uvAttributeLocation = gl.getAttribLocation(shader, "a_uv");
+                gl.enableVertexAttribArray(uvAttributeLocation);
+                gl.vertexAttribPointer(3, 2, gl.FLOAT, false, 0, 0);
+            }
+        }
+
+        function initBuffer() {
+            triangle_vao = gl.createVertexArray();
+            createVAO(triangle_vao, shaderProgram, triangle_vertices, triangle_normals, triangle_color, []);
+
+            cube_vao = gl.createVertexArray()
+            createVAO(cube_vao, shaderProgram, cube_vertices, cube_normals, cube_colors, []);
+
+            sphere_vao = gl.createVertexArray();// in a unit sphere the normals are the vertex
+            createVAO(sphere_vao, shaderProgram, sphere_vertices, sphere_vertices, sphere_colors, []);
+
+            disc_vao = gl.createVertexArray();
+            createVAO(disc_vao, objectProgram, disc_vertices, disc_normals, [], disc_uv);
+
+            terrain_vao = gl.createVertexArray();
+            createVAO(terrain_vao, shaderProgram, terrain_vertices, terrain_normals, terrain_colors, []);
+
+            object_sphere_vao = gl.createVertexArray();
+            createVAO(object_sphere_vao, objectProgram, obj_sphere_vertex, obj_sphere_normals, [], obj_sphere_uv);
+
+            spaceship_vao = gl.createVertexArray();
+            createVAO(spaceship_vao, objectProgram, spaceship_vertex, spaceship_normals, [], spaceship_uv);
+
+            cow_vao = gl.createVertexArray();
+            createVAO(cow_vao, objectProgram, cow_vertex, cow_normals, [], cow_uv);
+
+            taxi_vao = gl.createVertexArray();
+            createVAO(taxi_vao, objectProgram, taxi_vertex, taxi_normals, [], taxi_uv);
+
+            tree_vao = gl.createVertexArray();
+            createVAO(tree_vao, objectProgram, tree_vertex, tree_normals, [], tree_uv);
+
+            house_vao = gl.createVertexArray();
+            createVAO(house_vao, objectProgram, house_vertex, house_normals, [], house_uv);
+
+            dead_tree_vao = gl.createVertexArray();
+            createVAO(dead_tree_vao, objectProgram, dead_tree_vertex, dead_tree_normals, [], dead_tree_uv);
+        }
+
+        function draw_main() {
+            //calculate global light direction since every shader use the same
+            let omega_light = document.getElementById("omega_light").value * Math.PI/180;
+            let fi_light = document.getElementById("fi_light").value * Math.PI/180;
+            let light_x = Math.sin(omega_light) * Math.sin(fi_light);
+            let light_y = Math.cos(omega_light);
+            let light_z = -Math.sin(omega_light) * Math.cos(fi_light);
+            lightDirection = vec3.fromValues(light_x, light_y, light_z);
+
+            // update the position of the first person camera
+            if (step_forward) {
+                vec4.add(position_camera, position_camera, direction_camera);
+            } else if (step_backward) {
+                vec4.subtract(position_camera, position_camera, direction_camera);
+            }
+            if (step_left) {
+                let go_left = vec4.fromValues(direction_camera[2], 0, -direction_camera[0], 0);
+                vec4.add(position_camera, position_camera, go_left);
+            } else if (step_right) {
+                let go_right = vec4.fromValues(-direction_camera[2], 0, direction_camera[0], 0);
+                vec4.add(position_camera, position_camera, go_right);
+            }
+
+            let camera_selector = parseInt(document.getElementById("camera_selector").value);
+            camera_selection_arr[camera_selector](viewMatrix,copy_view_matrix);
+
+            gl.bindFramebuffer(gl.FRAMEBUFFER, frameBuffer);
+            drawShadowMap();
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            draw_hyperbolic();
+            draw_sky();
+            if (document.getElementById("outline").checked) {
+                draw_outline();
+            }
+            window.requestAnimationFrame(function() {draw_main();});
+        }
+
+        function draw_outline() {
+            gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+            gl.enable(gl.CULL_FACE);
+            gl.enable(gl.DEPTH_TEST);
+            gl.useProgram(shaderProgram);
+            let viewMatrixLocation = gl.getUniformLocation(shaderProgram, "viewMatrix");
+            let projectionMatrixLocation = gl.getUniformLocation(shaderProgram, "projectionMatrix");
+            let lightDirectionLocation = gl.getUniformLocation(shaderProgram,"lightDirection");
+            let lightProjectionMatrixLocation = gl.getUniformLocation(shaderProgram, "lightProjectionMatrix");
+            let lightViewMatrixLocation = gl.getUniformLocation(shaderProgram, "lightViewMatrix");
+            let shadowMapLocation = gl.getUniformLocation(shaderProgram, "shadowMap");
+            let modelMatrixLocation = gl.getUniformLocation(shaderProgram, "modelMatrix");
+            let projectionMatrix = mat4.create();// the projection matrix
+            // 90 degree angle opening in radiant for now is constant
+            mat4.perspective(projectionMatrix, (90 * Math.PI / 180), aspect, 0.1, 10);
+
+            gl.uniformMatrix4fv(viewMatrixLocation, false, viewMatrix);
+            gl.uniformMatrix4fv(projectionMatrixLocation, false, projectionMatrix);
+            gl.uniform3fv(lightDirectionLocation, lightDirection);
+
+            gl.uniformMatrix4fv(lightProjectionMatrixLocation, false, lightProjectionMatrix);
+            gl.uniformMatrix4fv(lightViewMatrixLocation, false, lightViewMatrix);
+
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, shadowTexture);
+            gl.uniform1i(shadowMapLocation, 0);
+            
+            // //draw a wireframe of a sphere
+            let modelM = mat4.create()
+            mat4.fromScaling(modelM,vec3.fromValues(2,2,2));
+            gl.bindVertexArray(sphere_vao)
+            gl.uniformMatrix4fv(modelMatrixLocation, false, modelM);
+            gl.drawArrays(gl.LINES, 0, sphere_vertices.length/3);
+        }
+
+        function draw_sky() {
+            gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+            gl.cullFace(gl.FRONT);
+            gl.useProgram(skyProgram);
+            let viewMatrixLocation = gl.getUniformLocation(skyProgram, "viewMatrix");
+            let projectionMatrixLocation = gl.getUniformLocation(skyProgram, "projectionMatrix");
+            let skyTextureLocation = gl.getUniformLocation(skyProgram, "skyTexture");
+
+            let modelMatrixLocation = gl.getUniformLocation(skyProgram, "modelMatrix");
+            let model = mat4.create();
+            mat4.fromScaling(model, vec3.fromValues(100,100,100));
+
+            let projectionMatrix = mat4.create();// the projection matrix
+            mat4.perspective(projectionMatrix, (90 * Math.PI / 180), aspect, 0.1, 100);
+
+            gl.uniformMatrix4fv(viewMatrixLocation, false, copy_view_matrix);
+            gl.uniformMatrix4fv(projectionMatrixLocation, false, projectionMatrix);
+
+            gl.uniformMatrix4fv(modelMatrixLocation, false, model);
+
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_CUBE_MAP, skyTexture);
+            gl.uniform1i(skyTextureLocation, 0);
+
+            gl.bindVertexArray(cube_vao);
+            gl.drawArrays(gl.TRIANGLES, 0, cube_vertices.length/3);
+            gl.cullFace(gl.BACK);
+
+        }
+
+        function draw_hyperbolic() {
+
+            gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+
+            gl.clearColor(0.8, 0.8, 0.8, 1.0);//background color
+
+            gl.enable(gl.CULL_FACE);
+            gl.enable(gl.DEPTH_TEST);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+            let projectionMatrix = mat4.create();// the projection matrix
+            // 90 degree angle opening in radiant for now is constant
+            mat4.perspective(projectionMatrix, (90 * Math.PI / 180), aspect, 0.1, 10);
+
+            gl.useProgram(objectProgram);
+            let viewMatrixLocation = gl.getUniformLocation(objectProgram, "viewMatrix");
+            let projectionMatrixLocation = gl.getUniformLocation(objectProgram, "projectionMatrix");
+            let lightDirectionLocation = gl.getUniformLocation(objectProgram,"lightDirection");
+            let lightProjectionMatrixLocation = gl.getUniformLocation(objectProgram, "lightProjectionMatrix");
+            let lightViewMatrixLocation = gl.getUniformLocation(objectProgram, "lightViewMatrix");
+            let shadowMapLocation = gl.getUniformLocation(objectProgram, "shadowMap");
+
+            //let correctionMatrixLocation = gl.getUniformLocation(shadowProgram, "correctionMatrix");
+
+            gl.uniformMatrix4fv(viewMatrixLocation, false, viewMatrix);
+            gl.uniformMatrix4fv(projectionMatrixLocation, false, projectionMatrix);
+            gl.uniform3fv(lightDirectionLocation, lightDirection);
+
+            gl.uniformMatrix4fv(lightProjectionMatrixLocation, false, lightProjectionMatrix);
+            gl.uniformMatrix4fv(lightViewMatrixLocation, false, lightViewMatrix);
+
+            //gl.uniformMatrix4fv(correctionMatrixLocation, false, correctionMatrix);
+
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, shadowTexture);
+            gl.uniform1i(shadowMapLocation, 0);
+
+            drawGeometry(objectProgram, false);
+        }
+
+        function drawShadowMap(){
+            gl.viewport(0, 0, 2048, 2048);
+            gl.clearColor(1.0, 1.0, 1.0, 1.0);
+            gl.enable(gl.CULL_FACE);
+            gl.enable(gl.DEPTH_TEST);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+            gl.useProgram(shadowProgram);
+
+            // view matrix
+            let scaled_light_direction = vec3.create();
+            vec3.scale(scaled_light_direction,lightDirection,2)
+            let viewMatrix_shadow = mat4.create();
+            mat4.lookAt(viewMatrix_shadow, scaled_light_direction, vec3.fromValues(0,0,0), vec3.fromValues(0,1,0))
+
+            var projectionMatrix = mat4.create();
+            mat4.ortho(projectionMatrix, -1.2, 1.2, -1.2, 1.2, 0.1, 5);
+            //mat4.ortho(projectionMatrix, -4, 4, -4, 4, 0.1, 5);
+
+            let projectionMatrixLocation = gl.getUniformLocation(shadowProgram, "projectionMatrix");
+            let viewMatrixLocation = gl.getUniformLocation(shadowProgram, "viewMatrix");
+            //let correctionMatrixLocation = gl.getUniformLocation(shadowProgram, "correctionMatrix");
+
+            gl.uniformMatrix4fv(viewMatrixLocation, false, viewMatrix_shadow);
+            gl.uniformMatrix4fv(projectionMatrixLocation, false, projectionMatrix);
+            //gl.uniformMatrix4fv(correctionMatrixLocation, false, correctionMatrix);
+
+            drawGeometry(shadowProgram, true);
+
+            lightViewMatrix = mat4.clone(viewMatrix_shadow)
+            lightProjectionMatrix = mat4.clone(projectionMatrix);
+        }
+
+        function drawGeometry(program, is_shadow) {
+            let modelMatrixLocation = gl.getUniformLocation(program, "modelMatrix");
+            let textureLocation;
+            if (!is_shadow) {
+                textureLocation = gl.getUniformLocation(program, "textureObject");
+            }
+            let modelMatrix = mat4.create();
+           
+            //draw taxi
+            gl.bindVertexArray(taxi_vao)
+            if (!is_shadow){
+                gl.activeTexture(gl.TEXTURE0 + 1);
+                gl.bindTexture(gl.TEXTURE_2D, taxi_texture.glTexture);
+                gl.uniform1i(textureLocation, 1);
+            }
+            gl.uniformMatrix4fv(modelMatrixLocation, false, taxi_model_matrix);
+            gl.drawArrays(gl.TRIANGLES, 0, taxi_vertex.length/3);
+
+            //draw house
+            gl.bindVertexArray(house_vao)
+            if (!is_shadow){
+                gl.activeTexture(gl.TEXTURE0 + 1);
+                gl.bindTexture(gl.TEXTURE_2D, house_texture.glTexture);
+                gl.uniform1i(textureLocation, 1);
+            }
+            gl.uniformMatrix4fv(modelMatrixLocation, false, house_model_matrix);
+            gl.drawArrays(gl.TRIANGLES, 0, house_vertex.length/3);
+
+            gl.bindVertexArray(spaceship_vao)
+            if (!is_shadow) {
+                gl.activeTexture(gl.TEXTURE0 + 1);
+                gl.bindTexture(gl.TEXTURE_2D, spaceship_texture.glTexture);
+                gl.uniform1i(textureLocation, 1);
+            }
+            // for (let index = 0; index <= 360; index+=45) {
+            //     let rot = hyp_rotation_y(vec4.fromValues(-0.3,-0.2,0.7,1), index * Math.PI / 180)
+            //     mat4.multiply(rot, rot, space_model_matrix)
+            //     gl.uniformMatrix4fv(modelMatrixLocation, false, rot);
+            //     gl.drawArrays(gl.TRIANGLES, 0, spaceship_vertex.length/3);
+            // }
+            let spaceship_rotation_point = hyp_rotation_y(vec4.fromValues(-0.3,-0.2,0.7,1), spaceship_angle * Math.PI / 180)
+            mat4.multiply(spaceship_rotation_point, spaceship_rotation_point, space_model_matrix)
+            gl.uniformMatrix4fv(modelMatrixLocation, false, spaceship_rotation_point);
+            gl.drawArrays(gl.TRIANGLES, 0, spaceship_vertex.length/3);
+            spaceship_angle += 0.5;
+            if (spaceship_angle >= 360) {
+                spaceship_angle = 0;
+            }
+
+
+
+            gl.bindVertexArray(cow_vao)
+            if (!is_shadow) {
+                gl.activeTexture(gl.TEXTURE0 + 1);
+                gl.bindTexture(gl.TEXTURE_2D, cow_texture.glTexture);
+                gl.uniform1i(textureLocation, 1);
+            }
+            gl.uniformMatrix4fv(modelMatrixLocation, false, cow_model_matrix);
+            gl.drawArrays(gl.TRIANGLES, 0, cow_vertex.length/3);
+
+            gl.uniformMatrix4fv(modelMatrixLocation, false, cow2_model_matrix);
+            gl.drawArrays(gl.TRIANGLES, 0, cow_vertex.length/3);
+
+            gl.bindVertexArray(tree_vao)
+            if (!is_shadow) {
+                gl.activeTexture(gl.TEXTURE0 + 1);
+                gl.bindTexture(gl.TEXTURE_2D, tree_texture.glTexture);
+                gl.uniform1i(textureLocation, 1);
+            }
+            gl.uniformMatrix4fv(modelMatrixLocation, false, tree1_model_matrix);
+            gl.drawArrays(gl.TRIANGLES, 0, tree_vertex.length/3);
+
+            gl.uniformMatrix4fv(modelMatrixLocation, false, tree2_model_matrix);
+            gl.drawArrays(gl.TRIANGLES, 0, tree_vertex.length/3);
+
+            gl.uniformMatrix4fv(modelMatrixLocation, false, tree3_model_matrix);
+            gl.drawArrays(gl.TRIANGLES, 0, tree_vertex.length/3);
+
+            gl.uniformMatrix4fv(modelMatrixLocation, false, tree4_model_matrix);
+            gl.drawArrays(gl.TRIANGLES, 0, tree_vertex.length/3);
+
+            gl.uniformMatrix4fv(modelMatrixLocation, false, tree5_model_matrix);
+            gl.drawArrays(gl.TRIANGLES, 0, tree_vertex.length/3);
+
+            gl.bindVertexArray(dead_tree_vao)
+            gl.uniformMatrix4fv(modelMatrixLocation, false, dead_tree_model_matrix);
+            gl.drawArrays(gl.TRIANGLES, 0, dead_tree_vertex.length/3);
+
+            gl.uniformMatrix4fv(modelMatrixLocation, false, dead_tree2_model_matrix);
+            gl.drawArrays(gl.TRIANGLES, 0, dead_tree_vertex.length/3);
+
+            gl.uniformMatrix4fv(modelMatrixLocation, false, dead_tree3_model_matrix);
+            gl.drawArrays(gl.TRIANGLES, 0, dead_tree_vertex.length/3);
+
+
+            mat4.identity(modelMatrix);
+
+            //draw the disc
+            if (!is_shadow){
+                gl.bindVertexArray(disc_vao);
+            
+                gl.activeTexture(gl.TEXTURE0 + 1);
+                gl.bindTexture(gl.TEXTURE_2D, grass_texture.glTexture);
+                gl.uniform1i(textureLocation, 1);
+
+                gl.uniformMatrix4fv(modelMatrixLocation, false, modelMatrix);
+                gl.drawArrays(gl.TRIANGLES, 0, disc_vertices.length/3);
+            }
+        }
+
+        function first_person_camera(viewMatrix, copy) {
+            const k = 0.05;
+            mat4.fromYRotation(viewMatrix, horizontal_angle * Math.PI / 180 )
+            let vertical_rotation = mat4.create();
+            mat4.fromXRotation(vertical_rotation, vertical_angle * Math.PI / 180);
+            mat4.multiply(viewMatrix, vertical_rotation,viewMatrix );
+
+            mat4.copy(copy,viewMatrix);//copy the view matrix for only the rotation part
+
+            //then perform a translation in the direction we are looking at
+            let mapped_x = map_in_circle(position_camera[0],k);
+            let mapped_z = map_in_circle(position_camera[2],k);
+            let final_x = mapped_x * Math.sqrt(1 - (mapped_z ** 2)/2 );
+            let final_z = mapped_z * Math.sqrt(1 - (mapped_x ** 2)/2 );
+            let mapped_position = vec4.fromValues(final_x,
+                                                  0,
+                                                  final_z,
+                                                  1);
+            let translation = hyp_translation(vec4.fromValues(0,0,0,1), mapped_position)
+
+            let tr_up = mat4.create();
+            mat4.fromTranslation(tr_up, vec3.fromValues(0,-0.25,0));
+            mat4.multiply(viewMatrix, viewMatrix, tr_up);
+            
+            mat4.multiply(viewMatrix, viewMatrix, hyp_translation(vec4.fromValues(0,0,0,1), mapped_position));
+            
+            
+            //document.getElementById('position').innerHTML = "x: "+position_camera[0] + " | z: " + position_camera[2];
+            //document.getElementById('mapped_position').innerHTML = `x': ${mapped_position[0]} | z': ${mapped_position[2]}`;
+            document.getElementById("length").innerHTML = `Distance from the origin: ${vec3.length(vec3.fromValues(mapped_position[0],0,mapped_position[2]))}`
+            //document.getElementById('direction').innerHTML = horizontal_angle + "deg";
+
+            //adding the euclidean translation to the copy
+            let tr = mat4.create;
+            mat4.fromTranslation(tr, vec3.fromValues(final_x, 0, final_z));
+            mat4.multiply(copy, copy, tr);
+        }
+
+        function map_in_circle(curren_position, k) {
+            let x = Math.abs(curren_position);
+            let negative = curren_position < 0 ? -1:1;
+            return negative * (1 - Math.exp(-k * x)); 
+        }
+
+        function third_person_camera(viewMatrix, copy) {
+            //camera for third person view
+            let omega = document.getElementById("omega").value * Math.PI/180;
+            let fi = document.getElementById("fi").value * Math.PI/180;
+            let distance = document.getElementById("distance").value / 100;
+            let camera_x = distance * Math.sin(omega) * Math.sin(fi);
+            let camera_y = distance * Math.cos(omega);
+            let camera_z = distance * Math.sin(omega) * Math.cos(fi);
+            let camera_position = vec3.fromValues(camera_x, camera_y, camera_z);
+            mat4.lookAt(viewMatrix, camera_position, vec3.fromValues(0,0,0), vec3.fromValues(0,1,0));
+            //the copy is the same as the viewMatrix since they are both euclidean
+            mat4.copy(copy, viewMatrix);
+        }
+
+        function load_sky_texture() {
+            skyTexture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_CUBE_MAP, skyTexture);
+            gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+            gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+            gl.texImage2D(gl.TEXTURE_CUBE_MAP_POSITIVE_X, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, skyTextureImages[0]);
+            gl.texImage2D(gl.TEXTURE_CUBE_MAP_NEGATIVE_X, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, skyTextureImages[1]);
+            gl.texImage2D(gl.TEXTURE_CUBE_MAP_POSITIVE_Y, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, skyTextureImages[2]);
+            gl.texImage2D(gl.TEXTURE_CUBE_MAP_NEGATIVE_Y, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, skyTextureImages[3]);
+            gl.texImage2D(gl.TEXTURE_CUBE_MAP_POSITIVE_Z, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, skyTextureImages[4]);
+            gl.texImage2D(gl.TEXTURE_CUBE_MAP_NEGATIVE_Z, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, skyTextureImages[5]);
+
+            gl.generateMipmap(gl.TEXTURE_CUBE_MAP);
+
+        }
+
+        function start(){
+            initWebGL();
+            createGLSLPrograms();
+            initBuffer();
+
+            load_sky_texture();
+            touch_handlers();//initiate key handlers
+
+            // create texture for rendering
+            shadowTexture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, shadowTexture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 2048, 2048, 0, gl.RGBA, gl.HALF_FLOAT, null);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+            // create a depth texture
+            depthTexture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, depthTexture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT32F, 2048, 2048, 0, gl.DEPTH_COMPONENT, gl.FLOAT, null);
+
+            frameBuffer = gl.createFramebuffer();
+            gl.bindFramebuffer(gl.FRAMEBUFFER, frameBuffer);
+
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, shadowTexture, 0);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depthTexture, 0);
+
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+            spaceship_texture.glTexture = gl.createTexture()
+            gl.bindTexture(gl.TEXTURE_2D, spaceship_texture.glTexture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 1024, 1024, 0, gl.RGBA, gl.HALF_FLOAT, null);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,gl.UNSIGNED_BYTE,spaceship_texture);
+            gl.generateMipmap(gl.TEXTURE_2D);
+
+            cow_texture.glTexture = gl.createTexture()
+            gl.bindTexture(gl.TEXTURE_2D, cow_texture.glTexture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 1024, 1024, 0, gl.RGBA, gl.HALF_FLOAT, null);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,gl.UNSIGNED_BYTE,cow_texture);
+            gl.generateMipmap(gl.TEXTURE_2D);
+
+            taxi_texture.glTexture = gl.createTexture()
+            gl.bindTexture(gl.TEXTURE_2D, taxi_texture.glTexture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 1024, 1024, 0, gl.RGBA, gl.HALF_FLOAT, null);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,gl.UNSIGNED_BYTE,taxi_texture);
+            gl.generateMipmap(gl.TEXTURE_2D);
+
+            tree_texture.glTexture = gl.createTexture()
+            gl.bindTexture(gl.TEXTURE_2D, tree_texture.glTexture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 1024, 1024, 0, gl.RGBA, gl.HALF_FLOAT, null);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,gl.UNSIGNED_BYTE,tree_texture);
+            gl.generateMipmap(gl.TEXTURE_2D);
+
+            wood_texture.glTexture = gl.createTexture()
+            gl.bindTexture(gl.TEXTURE_2D, wood_texture.glTexture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 1024, 1024, 0, gl.RGBA, gl.HALF_FLOAT, null);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,gl.UNSIGNED_BYTE,wood_texture);
+            gl.generateMipmap(gl.TEXTURE_2D);
+
+            house_texture.glTexture = gl.createTexture()
+            gl.bindTexture(gl.TEXTURE_2D, house_texture.glTexture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 2048, 2048, 0, gl.RGBA, gl.HALF_FLOAT, null);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,gl.UNSIGNED_BYTE,house_texture);
+            gl.generateMipmap(gl.TEXTURE_2D);
+
+            grass_texture.glTexture = gl.createTexture()
+            gl.bindTexture(gl.TEXTURE_2D, grass_texture.glTexture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 2048, 2048, 0, gl.RGBA, gl.HALF_FLOAT, null);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,gl.UNSIGNED_BYTE,grass_texture);
+            gl.generateMipmap(gl.TEXTURE_2D);
+
+            draw_main()
+        }
+
+        function count_down() {
+            leftToRead -= 1;
+            if (leftToRead === 0) {
+                console.log("starting")
+                start();
+            }
+        }
+
+        function main() {
+
+            leftToRead = skyTextureName.length + 7; // + other array of texture name TODO add later
+            
+            if(leftToRead === 0) {
+                start()
+            } else {
+                for (let index = 0; index < skyTextureName.length; index++) {
+                    skyTextureImages.push(new Image());
+                    skyTextureImages[index].src = skyTextureName[index];
+                    skyTextureImages[index].onload = count_down;
+                }
+
+                spaceship_texture = new Image();
+                spaceship_texture.src = spaceship_textureName;
+                spaceship_texture.onload = count_down;
+
+                cow_texture = new Image();
+                cow_texture.src = cow_textureName;
+                cow_texture.onload = count_down;
+
+                taxi_texture = new Image();
+                taxi_texture.src = taxi_textureName;
+                taxi_texture.onload = count_down;
+
+                tree_texture = new Image();
+                tree_texture.src = tree_textureName;
+                tree_texture.onload = count_down;
+
+                house_texture = new Image();
+                house_texture.src = house_textureName;
+                house_texture.onload = count_down;
+
+                grass_texture = new Image();
+                grass_texture.src = grass_textureName;
+                grass_texture.onload = count_down;
+
+                wood_texture = new Image();
+                wood_texture.src = wood_textureName;
+                wood_texture.onload = count_down;
+            }
+            //start();
+        }
+        
+        </script>
+    </head>
+
+    <body onload="main();">
+        <canvas id="webgl-canvas" width="1024" height="768"></canvas>
+        <div  style="float: right">
+            <h2>Light position:</h5>
+            <div class="slidecontainer">
+                vertical:</br><input type="range" min="1" max="100" value="45" id="omega_light">
+            </div>
+            <div class="slidecontainer">
+                horizontal:</br><input type="range" min="-180" max="180" value="0" id="fi_light">
+            </div>
+            <p id="lightDirection"></p>
+
+            <h2>Camera view selector:</h5>
+            <label for="camera">Choose a camera view: </label>
+            <select id="camera_selector">
+                <option value="1">first person</option>
+                <option value="0">third person</option>
+            </select>
+            <h4>Camera third person:</h4>
+            <div class="slidecontainer">
+                vertical position:</br><input type="range" min="1" max="100" value="45" id="omega">
+            </div>
+            <div class="slidecontainer">
+                horizontal position:</br><input type="range" min="-180" max="180" value="0" id="fi">
+            </div>
+            <div class="slidecontainer">
+                distance from centre:</br><input type="range" min="50" max="500" value="100" id="distance">
+            </div>
+            <h4>Other:</h4>
+            <!-- <p id="position"></p>
+            <p id="mapped_position"></p> -->
+            <p id="length"></p>
+            <p>The distance from the centre should not be grater than 1</p>
+            <!-- <h3>Direction:</h3>
+            <p id="direction"></p> -->
+            <div>
+                <p>Check the box below to visualise the wireframe of the hyperbolic sphere:</p>
+                <input type="checkbox" id="outline" name="outline">
+            </div>
+        </div>
+        <div>
+            <h4>Instruction:</h4>
+            <p>
+                Select a camera view on the right pannel, the light position and the controls for the third person camera are on the pannel aswell.
+            </p>
+            <p>For the first person camera click and drag the mouse on the screen, to move use the W key to go forward, S key to go backward, A to go left and D to go right.</p>
+        </div>
+    </body>
+</html>
